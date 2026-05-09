@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>기체의 압력 시뮬레이터 3846</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        /* 인트로 스크린 스타일 */
+        #intro-screen {
+            position: fixed;
+            inset: 0;
+            background: #0f172a;
+            z-index: 10000;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            transition: opacity 0.5s ease, visibility 0.5s ease;
+        }
+
+        .intro-text {
+            font-size: 2.5rem;
+            font-weight: 800;
+            text-align: center;
+            background: linear-gradient(to right, #a5b4fc, #c084fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            /* 1초 대기 후 0.8초 동안 위로 올라가며 작아짐 */
+            animation: textMoveUp 0.8s ease 1s forwards;
+        }
+
+        .intro-spinner {
+            margin-top: 20px;
+            width: 60px;
+            height: 60px;
+            border: 6px solid rgba(255, 255, 255, 0.1);
+            border-top: 6px solid #c084fc;
+            border-radius: 50%;
+            opacity: 0;
+            /* 1.5초 후 나타나며 적당한 속도로 부드럽게 회전 (회전 속도 조정) */
+            animation: spinnerFadeIn 0.3s ease 1.5s forwards, spinNormal 1s linear infinite 1.5s;
+        }
+
+        @keyframes textMoveUp {
+            0% { transform: translateY(0) scale(1); }
+            100% { transform: translateY(-40px) scale(0.75); }
+        }
+        @keyframes spinnerFadeIn {
+            0% { opacity: 0; }
+            100% { opacity: 1; }
+        }
+        @keyframes spinNormal {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* 메인 UI 스타일 */
+        @keyframes gradientFlow {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        body {
+            background: linear-gradient(-45deg, #1e1b4b, #312e81, #1e3a8a, #0f172a);
+            background-size: 300% 300%;
+            animation: gradientFlow 15s ease infinite;
+            color: #f8fafc;
+            font-family: 'Inter', -apple-system, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        #app-container {
+            width: 95%;
+            max-width: 1100px;
+            margin-top: 2rem;
+            margin-bottom: 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.6);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 24px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            padding: 24px;
+        }
+
+        #canvas-wrapper {
+            border-radius: 16px;
+            overflow: hidden;
+            width: 100%;
+            height: 480px;
+            position: relative;
+            box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.5);
+            background: transparent; 
+        }
+
+        .overlay-text {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 0.85rem;
+            pointer-events: none;
+            background: rgba(0, 0, 0, 0.4);
+            padding: 6px 12px;
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .slider-group {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .slider-control {
+            flex: 1;
+            min-width: 250px;
+            background: rgba(15, 23, 42, 0.5);
+            padding: 20px;
+            border-radius: 16px;
+            display: flex;
+            flex-direction: column;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+            margin-top: 15px;
+        }
+
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 24px;
+            width: 24px;
+            border-radius: 50%;
+            background: #818cf8;
+            cursor: pointer;
+            margin-top: -8px;
+            box-shadow: 0 0 15px rgba(129, 140, 248, 0.6);
+            transition: transform 0.2s;
+        }
+
+        input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.15); }
+        input[type=range]:disabled::-webkit-slider-thumb { background: #475569; cursor: not-allowed; }
+
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 8px;
+            cursor: pointer;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+        }
+
+        .data-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 15px;
+            margin-top: 10px;
+        }
+
+        .data-card {
+            background: rgba(15, 23, 42, 0.6);
+            padding: 15px;
+            border-radius: 16px;
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .data-card.highlight {
+            background: linear-gradient(135deg, rgba(79, 70, 229, 0.2) 0%, rgba(147, 51, 234, 0.2) 100%);
+            border: 1px solid #818cf8;
+            box-shadow: 0 0 20px rgba(129, 140, 248, 0.1);
+        }
+
+        .data-title { font-size: 0.8rem; color: #94a3b8; margin-bottom: 5px; font-weight: 600; }
+        .data-value { font-size: 1.4rem; font-weight: 800; color: #f8fafc; }
+        .data-value.primary { color: #a5b4fc; }
+        .data-value.highlight-text { color: #c084fc; font-size: 1.8rem; }
+
+        #trap-modal {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.95);
+            z-index: 9999;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(10px);
+        }
+
+        .glitch-text {
+            color: #ef4444;
+            font-size: 2rem;
+            font-weight: bold;
+            font-family: 'Courier New', Courier, monospace;
+            text-align: center;
+            padding: 20px;
+            text-shadow: 2px 0 #00ffea, -2px 0 #ff003c;
+            animation: glitch-anim 0.2s linear infinite;
+        }
+
+        @keyframes glitch-anim {
+            0% { transform: translate(0) }
+            20% { transform: translate(-2px, 2px) }
+            40% { transform: translate(-2px, -2px) }
+            60% { transform: translate(2px, 2px) }
+            80% { transform: translate(2px, -2px) }
+            100% { transform: translate(0) }
+        }
+
+        #shortcut-toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(15, 23, 42, 0.85);
+            border: 1px solid #818cf8;
+            color: #f8fafc;
+            padding: 16px 24px;
+            border-radius: 12px;
+            font-size: 1rem;
+            z-index: 1000;
+            display: none;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 0 20px rgba(129, 140, 248, 0.4);
+            transition: all 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+
+<!-- 인트로 스크린 -->
+<div id="intro-screen">
+    <h1 class="intro-text">기체의 압력 시뮬레이터 3846에 오신 것을 환영합니다!</h1>
+    <div class="intro-spinner"></div>
+</div>
+
+<div id="app-container">
+    <div class="glass-panel text-center">
+        <h1 class="text-3xl md:text-4xl font-extrabold mb-2 bg-clip-text text-transparent bg-gradient-to-r from-indigo-300 to-purple-300 drop-shadow-lg">
+            기체의 압력 시뮬레이터 3846
+        </h1>
+        <p class="text-indigo-200 text-sm md:text-base opacity-80">
+            압력(P) = 부딪힌 힘(F) / 부딪힌 면적(A)
+        </p>
+    </div>
+
+    <!-- AI 자동 설정 패널 -->
+    <div class="glass-panel w-full flex flex-col gap-3">
+        <h3 class="text-sm font-bold text-indigo-300 flex items-center gap-2">
+            <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+            AI 실험 조건 자동 설정 (Gemini)
+        </h3>
+        <div class="flex flex-col md:flex-row gap-2">
+            <input type="text" id="aiPrompt" class="flex-1 bg-slate-900/80 border border-indigo-500/30 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-purple-500 transition-colors shadow-inner" placeholder="예: 온도는 300K로 올리고, 부피(높이)는 150으로 줄여줘. 입자는 2배로 해줘.">
+            <button id="btnAiSetup" class="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold py-3 px-6 rounded-xl transition-transform hover:scale-105 border border-white/10 flex items-center justify-center gap-2 min-w-[140px]">
+                <span id="aiBtnText">분석 및 적용</span>
+                <div id="aiLoading" class="hidden w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+            </button>
+        </div>
+    </div>
+
+    <!-- 3D Canvas -->
+    <div id="canvas-wrapper" class="glass-panel p-0">
+        <div class="overlay-text">마우스 드래그: 시점 회전 | 휠: 확대/축소</div>
+    </div>
+
+    <!-- Controls -->
+    <div class="slider-group">
+        <div class="slider-control">
+            <div class="flex justify-between items-center">
+                <label for="heightSlider" class="font-bold text-indigo-300">실린더 높이 (부피)</label>
+                <span id="sliderHeightVal" class="text-xs bg-slate-800 text-indigo-300 px-2 py-1 rounded border border-indigo-500/30 font-bold">300</span>
+            </div>
+            <input type="range" id="heightSlider" min="80" max="300" value="300" step="1">
+        </div>
+        <div class="slider-control">
+            <div class="flex justify-between items-center">
+                <label for="tempSlider" class="font-bold text-indigo-300">절대온도 조절</label>
+                <span id="sliderTempVal" class="text-xs bg-slate-800 text-pink-300 px-2 py-1 rounded border border-pink-500/30 font-bold">0 K</span>
+            </div>
+            <input type="range" id="tempSlider" min="0" max="600" value="0" step="10">
+        </div>
+        <div class="slider-control">
+            <div class="flex justify-between items-center">
+                <label for="nSlider" class="font-bold text-indigo-300">입자 배율 (n)</label>
+                <span id="sliderNVal" class="text-xs bg-slate-800 text-purple-300 px-2 py-1 rounded border border-purple-500/30 font-bold">1 배</span>
+            </div>
+            <input type="range" id="nSlider" min="1" max="5" value="1" step="1">
+        </div>
+    </div>
+
+    <div class="flex flex-col md:flex-row gap-6">
+        <!-- Data Panel -->
+        <div class="glass-panel flex-1">
+            <div class="data-grid">
+                <div class="data-card">
+                    <div class="data-title">계산상 입자 수</div>
+                    <div class="data-value primary" id="dispLogicalParticle">120 개</div>
+                    <div class="text-[0.65rem] text-slate-400 mt-1" id="dispVisualParticle">(화면 표시: 40개)</div>
+                </div>
+                <div class="data-card">
+                    <div class="data-title">현재 온도</div>
+                    <div class="data-value primary" id="dispTemp">0 K</div>
+                </div>
+                <div class="data-card">
+                    <div class="data-title">현재 높이 (V)</div>
+                    <div class="data-value primary" id="dispHeight">300</div>
+                </div>
+                <div class="data-card">
+                    <div class="data-title">부딪힌 면적 (A)</div>
+                    <div class="data-value primary" id="dispArea">0</div>
+                </div>
+                <div class="data-card highlight col-span-full">
+                    <div class="data-title text-purple-300">압력 (P = F / A)</div>
+                    <div class="data-value highlight-text" id="dispPressure">측정 중...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Graph Panel -->
+        <div class="glass-panel flex-1 flex flex-col items-center justify-center">
+            <h3 class="text-sm font-bold text-indigo-300 mb-2">실시간 압력 변화 그래프 (시간 흐름)</h3>
+            <div class="w-full h-48 relative">
+                <canvas id="boyleChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Buttons -->
+    <div class="flex justify-end gap-4 mt-2">
+        <!-- 화면 저장 -> 그래프 저장으로 수정됨 -->
+        <button id="btnDownload" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-6 rounded-xl shadow-[0_0_15px_rgba(99,102,241,0.3)] transition-transform hover:scale-105 border border-indigo-400/50 flex items-center gap-2">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+            그래프 저장 (PNG)
+        </button>
+        <button id="btnTrap" class="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white font-bold py-3 px-6 rounded-xl shadow-[0_0_15px_rgba(147,51,234,0.5)] transition-transform hover:scale-105 border border-white/20 flex items-center gap-2">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+            4K 고화질 시뮬레이션 결과 저장 (PRO)
+        </button>
+    </div>
+</div>
+
+<div id="trap-modal">
+    <div class="glitch-text">&lt;고화질을 그렇게 쉽게 다운받을 수 있을 것 같나...?&gt;</div>
+    <div class="text-slate-400 mt-4 text-lg animate-pulse border border-red-500/50 bg-red-900/20 px-6 py-2 rounded">
+        SYSTEM SUSPENDED ... 복구 중 ...
+    </div>
+</div>
+
+<div id="shortcut-toast">단축키 모드 활성화</div>
+
+<script>
+    // 인트로 애니메이션 시퀀스 컨트롤
+    window.addEventListener('load', () => {
+        const intro = document.getElementById('intro-screen');
+        // 4.5초 대기 후 페이드아웃 (3~5초 대기 요청 반영)
+        setTimeout(() => {
+            intro.style.opacity = '0';
+            setTimeout(() => {
+                intro.style.display = 'none';
+            }, 500);
+        }, 4500);
+
+        // 시뮬레이션 시작
+        animate();
+    });
+
+    const baseParticleCount = 120;
+    let particleMultiplier = 1;
+    const visualRatio = 3;
+    
+    let logicalParticleCount = baseParticleCount * particleMultiplier;
+    let currentVisualCount = Math.floor(logicalParticleCount / visualRatio);
+    
+    const cylinderRadius = 100;
+    const maxCylinderHeight = 350;
+    let currentCylinderHeight = 300; 
+    
+    let currentTemperature = 0;
+    const baseSpeed = 3.5; 
+    let particleSpeed = baseSpeed;
+    
+    const particles = [];
+    const particleRadius = 10;
+    
+    let accumulatedForce = 0; 
+    let forceWindow = []; 
+    const windowSize = 30; 
+    
+    let isCalibrating = true;
+    let calibrationFrames = 0;
+    let baseRawPressureSum = 0;
+    let pressureScaleFactor = 1.0; 
+    let currentDisplayPressure = 0;
+
+    let isSystemSuspended = false;
+    let shortcutMode = null;
+    let timeTick = 0;
+
+    // DOM 캐싱
+    const sliderHeight = document.getElementById('heightSlider');
+    const sliderTemp = document.getElementById('tempSlider');
+    const sliderN = document.getElementById('nSlider');
+    const dispArea = document.getElementById('dispArea');
+    const dispPressure = document.getElementById('dispPressure');
+    const dispHeight = document.getElementById('dispHeight');
+
+    const ctx = document.getElementById('boyleChart').getContext('2d');
+    // 라벨의 글씨색도 흰색계열로 밝게 조정
+    Chart.defaults.color = '#cbd5e1';
+    
+    const boyleChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: '실시간 압력',
+                data: [],
+                borderColor: '#c084fc',
+                backgroundColor: 'rgba(192, 132, 252, 0.3)',
+                borderWidth: 2,
+                pointRadius: 0,
+                tension: 0.4,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            scales: {
+                x: {
+                    title: { display: true, text: '시간 흐름', color: '#94a3b8' },
+                    grid: { color: 'rgba(255,255,255,0.05)' },
+                    ticks: { display: false }
+                },
+                y: {
+                    title: { display: true, text: '압력 (기압)', color: '#94a3b8' },
+                    min: 0, max: 5,
+                    grid: { color: 'rgba(255,255,255,0.1)' },
+                    ticks: { color: '#94a3b8' }
+                }
+            },
+            plugins: {
+                legend: { display: false }
+            }
+        }
+    });
+
+    const wrapper = document.getElementById('canvas-wrapper');
+    const scene = new THREE.Scene();
+    
+    const camera = new THREE.PerspectiveCamera(50, wrapper.clientWidth / wrapper.clientHeight, 1, 2000);
+    camera.position.set(0, 150, 650);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    renderer.setSize(wrapper.clientWidth, wrapper.clientHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setClearColor(0x000000, 0); 
+    wrapper.appendChild(renderer.domElement);
+
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.target.set(0, maxCylinderHeight / 2 - 50, 0);
+
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+    scene.add(ambientLight);
+    const dirLight = new THREE.DirectionalLight(0xa5b4fc, 0.8);
+    dirLight.position.set(200, 500, 300);
+    scene.add(dirLight);
+
+    // [가독성 향상] 원기둥의 재질을 명확히 하고 눈금선 추가
+    const cylinderGeo = new THREE.CylinderGeometry(cylinderRadius, cylinderRadius, maxCylinderHeight, 32);
+    const simpleGlassMat = new THREE.MeshPhysicalMaterial({ 
+        color: 0xe0e7ff, 
+        transparent: true, 
+        opacity: 0.25,
+        roughness: 0.1,
+        transmission: 0.5,
+        side: THREE.DoubleSide
+    });
+    const cylinderMesh = new THREE.Mesh(cylinderGeo, simpleGlassMat);
+    cylinderMesh.position.y = maxCylinderHeight / 2;
+    scene.add(cylinderMesh);
+
+    // 굵은 흰색 테두리로 원기둥 외형 명확화
+    const edges = new THREE.EdgesGeometry(cylinderGeo);
+    const lineMat = new THREE.LineBasicMaterial({ color: 0xffffff, opacity: 0.8, transparent: true });
+    const cylinderEdges = new THREE.LineSegments(edges, lineMat);
+    cylinderMesh.add(cylinderEdges);
+
+    // 가독성 향상을 위한 가로 눈금선(Rings) 추가
+    const ringGeo = new THREE.RingGeometry(cylinderRadius, cylinderRadius + 1.5, 64);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xc084fc, side: THREE.DoubleSide, transparent: true, opacity: 0.7 });
+    for(let i=1; i<=6; i++) {
+        const ring = new THREE.Mesh(ringGeo, ringMat);
+        ring.rotation.x = Math.PI / 2;
+        ring.position.y = (maxCylinderHeight / 7) * i;
+        scene.add(ring);
+    }
+
+    const floorGeo = new THREE.CylinderGeometry(cylinderRadius + 5, cylinderRadius + 5, 10, 32);
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x1e293b });
+    const floorMesh = new THREE.Mesh(floorGeo, floorMat);
+    floorMesh.position.y = -5;
+    scene.add(floorMesh);
+
+    const pistonGroup = new THREE.Group();
+    const pistonHeadGeo = new THREE.CylinderGeometry(cylinderRadius - 1, cylinderRadius - 1, 10, 32);
+    const pistonHeadMat = new THREE.MeshStandardMaterial({ color: 0x475569 });
+    const pistonHead = new THREE.Mesh(pistonHeadGeo, pistonHeadMat);
+    pistonGroup.add(pistonHead);
+    
+    const rodGeo = new THREE.CylinderGeometry(8, 8, 500, 16);
+    const rodMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8 });
+    const rodMesh = new THREE.Mesh(rodGeo, rodMat);
+    rodMesh.position.y = 250; 
+    pistonGroup.add(rodMesh);
+    
+    pistonGroup.position.y = currentCylinderHeight;
+    scene.add(pistonGroup);
+
+    const particleGeo = new THREE.SphereGeometry(particleRadius, 16, 16);
+    const particleMat = new THREE.MeshStandardMaterial({ 
+        color: 0x60a5fa,
+        emissive: 0x2563eb,
+        emissiveIntensity: 0.6
+    });
+
+    function createParticle() {
+        const mesh = new THREE.Mesh(particleGeo, particleMat);
+        let r = Math.random() * (cylinderRadius - particleRadius - 1);
+        let theta = Math.random() * Math.PI * 2;
+        let x = r * Math.cos(theta);
+        let z = r * Math.sin(theta);
+        let y = particleRadius + Math.random() * (currentCylinderHeight - particleRadius * 2);
+        
+        mesh.position.set(x, y, z);
+        scene.add(mesh);
+
+        let vx = (Math.random() - 0.5);
+        let vy = (Math.random() - 0.5);
+        let vz = (Math.random() - 0.5);
+        
+        let mag = Math.sqrt(vx*vx + vy*vy + vz*vz);
+        vx = (vx / mag) * particleSpeed;
+        vy = (vy / mag) * particleSpeed;
+        vz = (vz / mag) * particleSpeed;
+
+        return { mesh: mesh, pos: new THREE.Vector3(x, y, z), vel: new THREE.Vector3(vx, vy, vz) };
+    }
+
+    for (let i = 0; i < currentVisualCount; i++) {
+        particles.push(createParticle());
+    }
+
+    window.addEventListener('resize', () => {
+        camera.aspect = wrapper.clientWidth / wrapper.clientHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(wrapper.clientWidth, wrapper.clientHeight);
+    });
+
+    sliderTemp.addEventListener('input', () => {
+        if(isSystemSuspended) return;
+        currentTemperature = parseInt(sliderTemp.value);
+        document.getElementById('sliderTempVal').innerText = `${currentTemperature} K`;
+        document.getElementById('dispTemp').innerText = `${currentTemperature} K`;
+        
+        particleSpeed = baseSpeed + (currentTemperature * 0.015);
+        for (let p of particles) {
+            p.vel.normalize().multiplyScalar(particleSpeed);
+        }
+    });
+
+    sliderHeight.addEventListener('input', () => {
+        if(isSystemSuspended) return;
+        currentCylinderHeight = parseInt(sliderHeight.value);
+        document.getElementById('sliderHeightVal').innerText = currentCylinderHeight;
+        dispHeight.innerText = currentCylinderHeight;
+        
+        pistonGroup.position.y = currentCylinderHeight;
+
+        for (let p of particles) {
+            if (p.pos.y > currentCylinderHeight - particleRadius) {
+                p.pos.y = currentCylinderHeight - particleRadius;
+                if (p.vel.y > 0) p.vel.y *= -1; 
+            }
+        }
+    });
+
+    sliderN.addEventListener('input', () => {
+        if(isSystemSuspended) return;
+        particleMultiplier = parseInt(sliderN.value);
+        document.getElementById('sliderNVal').innerText = `${particleMultiplier} 배`;
+        
+        logicalParticleCount = baseParticleCount * particleMultiplier;
+        currentVisualCount = Math.floor(logicalParticleCount / visualRatio);
+        
+        document.getElementById('dispLogicalParticle').innerText = `${logicalParticleCount} 개`;
+        document.getElementById('dispVisualParticle').innerText = `(화면 표시: ${currentVisualCount}개)`;
+        
+        while(particles.length < currentVisualCount) { particles.push(createParticle()); }
+        while(particles.length > currentVisualCount) { 
+            let p = particles.pop();
+            scene.remove(p.mesh);
+        }
+    });
+
+    document.getElementById('btnTrap').addEventListener('click', () => {
+        if(isSystemSuspended) return;
+        isSystemSuspended = true;
+        
+        sliderHeight.disabled = true;
+        sliderTemp.disabled = true;
+        sliderN.disabled = true;
+
+        const modal = document.getElementById('trap-modal');
+        modal.style.display = 'flex';
+
+        setTimeout(() => {
+            modal.style.display = 'none';
+            isSystemSuspended = false;
+            sliderHeight.disabled = false;
+            sliderTemp.disabled = false;
+            sliderN.disabled = false;
+        }, 5000);
+    });
+
+    const toast = document.getElementById('shortcut-toast');
+    document.addEventListener('keydown', (e) => {
+        if(isSystemSuspended) return;
+        
+        const key = e.key.toLowerCase();
+        
+        if (key === 'p') {
+            shortcutMode = 'P';
+            toast.style.display = 'block';
+            toast.innerHTML = '현재 모드: <span class="text-purple-300 font-bold">[압력 조절]</span><br><span class="text-sm text-slate-300 mt-1 block">↑: 압력 증가 (실린더 누름)<br>↓: 압력 감소 (실린더 올림)</span>';
+        } else if (key === 't') {
+            shortcutMode = 'T';
+            toast.style.display = 'block';
+            toast.innerHTML = '현재 모드: <span class="text-pink-300 font-bold">[온도 조절]</span><br><span class="text-sm text-slate-300 mt-1 block">↑: 온도 상승<br>↓: 온도 하강</span>';
+        }
+        
+        if (shortcutMode === 'P') {
+            if (e.key === 'ArrowUp') {
+                sliderHeight.value = Math.max(parseInt(sliderHeight.min), parseInt(sliderHeight.value) - 10);
+                sliderHeight.dispatchEvent(new Event('input'));
+                e.preventDefault();
+            } else if (e.key === 'ArrowDown') {
+                sliderHeight.value = Math.min(parseInt(sliderHeight.max), parseInt(sliderHeight.value) + 10);
+                sliderHeight.dispatchEvent(new Event('input'));
+                e.preventDefault();
+            }
+        } else if (shortcutMode === 'T') {
+            if (e.key === 'ArrowUp') {
+                sliderTemp.value = Math.min(parseInt(sliderTemp.max), parseInt(sliderTemp.value) + 10);
+                sliderTemp.dispatchEvent(new Event('input'));
+                e.preventDefault();
+            } else if (e.key === 'ArrowDown') {
+                sliderTemp.value = Math.max(parseInt(sliderTemp.min), parseInt(sliderTemp.value) - 10);
+                sliderTemp.dispatchEvent(new Event('input'));
+                e.preventDefault();
+            }
+        }
+    });
+
+    // 커스텀 토스트 알림 함수
+    function showCustomToast(htmlMsg, duration = 3000) {
+        toast.style.display = 'block';
+        toast.innerHTML = htmlMsg;
+        setTimeout(() => {
+            toast.style.display = 'none';
+        }, duration);
+    }
+
+    // AI 자동 설정 버튼 클릭 이벤트 (Gemini API 호출)
+    document.getElementById('btnAiSetup').addEventListener('click', async () => {
+        if(isSystemSuspended) return;
+        const promptInput = document.getElementById('aiPrompt');
+        const prompt = promptInput.value;
+        if(!prompt.trim()) {
+            showCustomToast('<span class="text-red-400 font-bold">오류:</span> 실험 조건을 입력해주세요.');
+            return;
+        }
+
+        const btnText = document.getElementById('aiBtnText');
+        const loading = document.getElementById('aiLoading');
+        
+        // 로딩 UI 처리
+        btnText.innerText = "AI 생각중...";
+        loading.classList.remove('hidden');
+        promptInput.disabled = true;
+
+        try {
+            // 빈 문자열 API 키 (Canvas 환경에서 런타임에 자동 주입됨)
+            const apiKey = ""; 
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+
+            // Gemini 구조화된 출력(JSON Schema) 페이로드 구성
+            const payload = {
+                contents: [{ parts: [{ text: prompt }] }],
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "OBJECT",
+                        properties: {
+                            "temperature": { type: "INTEGER", description: "절대온도 (0 ~ 600)" },
+                            "height": { type: "INTEGER", description: "실린더 높이/부피 (80 ~ 300)" },
+                            "n_multiplier": { type: "INTEGER", description: "입자 배율 (1 ~ 5)" }
+                        }
+                    }
+                },
+                systemInstruction: {
+                    parts: [{ text: "너는 보일의 법칙 시뮬레이터 제어 AI야. 사용자의 텍스트를 분석해서 실험 조건 수치(온도, 실린더 높이, 입자 배율)를 추출해. 언급되지 않은 값은 추출하지 마." }]
+                }
+            };
+
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const result = await response.json();
+            
+            if (result.candidates && result.candidates.length > 0) {
+                const jsonText = result.candidates[0].content.parts[0].text;
+                const data = JSON.parse(jsonText);
+
+                // 파싱된 데이터로 슬라이더 값 변경 및 이벤트 트리거
+                let applied = false;
+                if (data.height !== undefined && data.height !== null) {
+                    sliderHeight.value = Math.min(300, Math.max(80, data.height));
+                    sliderHeight.dispatchEvent(new Event('input'));
+                    applied = true;
+                }
+                if (data.temperature !== undefined && data.temperature !== null) {
+                    sliderTemp.value = Math.min(600, Math.max(0, data.temperature));
+                    sliderTemp.dispatchEvent(new Event('input'));
+                    applied = true;
+                }
+                if (data.n_multiplier !== undefined && data.n_multiplier !== null) {
+                    sliderN.value = Math.min(5, Math.max(1, data.n_multiplier));
+                    sliderN.dispatchEvent(new Event('input'));
+                    applied = true;
+                }
+
+                if(applied) {
+                    showCustomToast('✨ <span class="text-indigo-300 font-bold">AI 설정 완료:</span> 입력하신 조건이 적용되었습니다.', 4000);
+                } else {
+                    showCustomToast('<span class="text-yellow-400 font-bold">알림:</span> 입력하신 문장에서 명확한 수치를 찾지 못했습니다.', 4000);
+                }
+            } else {
+                throw new Error("Invalid API Response");
+            }
+        } catch (e) {
+            console.error(e);
+            showCustomToast('<span class="text-red-400 font-bold">시스템 오류:</span> AI 분석 중 문제가 발생했습니다.');
+        } finally {
+            // UI 복구
+            btnText.innerText = "분석 및 적용";
+            loading.classList.add('hidden');
+            promptInput.disabled = false;
+        }
+    });
+
+    // 엔터 키 입력 시 AI 버튼 클릭 트리거
+    document.getElementById('aiPrompt').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            document.getElementById('btnAiSetup').click();
+        }
+    });
+
+    // 3D 화면 대신 "그래프(Chart)"를 저장하도록 수정
+    document.getElementById('btnDownload').addEventListener('click', () => {
+        if(isSystemSuspended) return;
+        
+        const canvas = document.getElementById('boyleChart');
+        
+        // 차트는 배경이 투명하게 다운로드될 수 있으므로, 임시 캔버스에 색상을 채우고 그림
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = canvas.width;
+        tempCanvas.height = canvas.height;
+        const tempCtx = tempCanvas.getContext('2d');
+        
+        // 배경색 설정 (다크 테마에 맞는 색상)
+        tempCtx.fillStyle = '#1e293b'; 
+        tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+        tempCtx.drawImage(canvas, 0, 0);
+        
+        const dataURL = tempCanvas.toDataURL('image/png');
+        
+        const link = document.createElement('a');
+        link.download = 'boyle_graph.png';
+        link.href = dataURL;
+        link.click();
+    });
+
+    function animate() {
+        requestAnimationFrame(animate);
+
+        if(isSystemSuspended) {
+            renderer.render(scene, camera);
+            return;
+        }
+
+        accumulatedForce = 0;
+
+        for (let p of particles) {
+            p.pos.add(p.vel);
+            
+            if (p.pos.y < particleRadius) {
+                p.pos.y = particleRadius;
+                if (p.vel.y < 0) {
+                    accumulatedForce += 2 * Math.abs(p.vel.y);
+                    p.vel.y *= -1;
+                }
+            }
+            
+            if (p.pos.y > currentCylinderHeight - particleRadius) {
+                p.pos.y = currentCylinderHeight - particleRadius;
+                if (p.vel.y > 0) {
+                    accumulatedForce += 2 * Math.abs(p.vel.y);
+                    p.vel.y *= -1;
+                }
+            }
+
+            let distFromCenter = Math.sqrt(p.pos.x * p.pos.x + p.pos.z * p.pos.z);
+            if (distFromCenter > cylinderRadius - particleRadius) {
+                let nx = p.pos.x / distFromCenter;
+                let nz = p.pos.z / distFromCenter;
+
+                let dot = p.vel.x * nx + p.vel.z * nz;
+                if (dot > 0) {
+                    p.vel.x -= 2 * dot * nx;
+                    p.vel.z -= 2 * dot * nz;
+                    accumulatedForce += 2 * Math.abs(dot);
+                }
+                p.pos.x = nx * (cylinderRadius - particleRadius);
+                p.pos.z = nz * (cylinderRadius - particleRadius);
+            }
+            p.mesh.position.copy(p.pos);
+        }
+
+        accumulatedForce *= visualRatio; 
+
+        forceWindow.push(accumulatedForce);
+        if (forceWindow.length > windowSize) { forceWindow.shift(); }
+        
+        let avgForce = 0;
+        for(let f of forceWindow) avgForce += f;
+        avgForce /= windowSize;
+
+        let baseArea = Math.PI * cylinderRadius * cylinderRadius;
+        let sideArea = 2 * Math.PI * cylinderRadius * currentCylinderHeight;
+        let totalArea = (baseArea * 2) + sideArea;
+
+        let rawPressure = totalArea > 0 ? (avgForce / totalArea) : 0;
+
+        if (isCalibrating) {
+            calibrationFrames++;
+            baseRawPressureSum += rawPressure;
+            
+            dispPressure.innerText = "기준점 설정...";
+            
+            if (calibrationFrames >= 60) { 
+                let avgBaseRawPressure = baseRawPressureSum / 60;
+                if (avgBaseRawPressure > 0) {
+                    pressureScaleFactor = 1.0 / avgBaseRawPressure; 
+                }
+                isCalibrating = false;
+            }
+        } else {
+            currentDisplayPressure = rawPressure * pressureScaleFactor;
+            
+            dispArea.innerText = Math.round(totalArea).toLocaleString();
+            dispPressure.innerText = currentDisplayPressure.toFixed(2) + " 기압";
+
+            if(calibrationFrames % 10 === 0) { 
+                timeTick++;
+                boyleChart.data.labels.push(timeTick);
+                boyleChart.data.datasets[0].data.push(currentDisplayPressure);
+                
+                if(boyleChart.data.labels.length > 50) {
+                    boyleChart.data.labels.shift();
+                    boyleChart.data.datasets[0].data.shift();
+                }
+
+                let maxY = Math.max(...boyleChart.data.datasets[0].data, currentDisplayPressure);
+                boyleChart.options.scales.y.max = Math.ceil(maxY) + 1;
+                
+                if(boyleChart.options.scales.y.max < 5) {
+                    boyleChart.options.scales.y.max = 5;
+                }
+                
+                boyleChart.update();
+            }
+            calibrationFrames++;
+        }
+
+        controls.update();
+        renderer.render(scene, camera);
+    }
+</script>
+
+</body>
+</html>
